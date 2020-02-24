@@ -2,6 +2,8 @@
 
 export(BarcodescoreR)
 export(BarcodeselectR)
+export(ChiPseqPeakPlotter)
+export(ChiPseqregionscoreR)
 export(FCcalculator)
 export(GOsorteR)
 export(RevComp)
@@ -10,3 +12,4 @@ export(Translate)
 export(demultiplex)
 export(file_sorteR)
 importFrom(data.table,data.table)
+importFrom(rtracklayer,import)

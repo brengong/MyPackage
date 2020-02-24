@@ -697,6 +697,369 @@ demultiplex <- function(x, barcode, nreads, cutoff) {
 
 
 
+##################################################################################################################################################################################
+##################################################################################################################################################################################
+##################################################################################################################################################################################
+##################################################################################################################################################################################
 
 
 
+#' ChiPseqPeakPlotter
+#'
+#' This function plotts the peak height of a CHiPseq experiment for a given chromosome location.
+#'
+#' @param treatment_bw a character vector indicating the location of the treatment bigwig file.
+#' @param control_bw a character vector indicating the location of the treatment bigwig file.
+#' @param chr a character vector indicating the chromosome number.
+#' @param start a number indicating the start site.
+#' @param end a number indicating the end site.
+#' @param average_dist a number indicating the number of bases to average the peak height.
+#' @param fill_dist a number indicating the number of average replicates to fill.
+#' @param type a character either "all" or "called" indicating whether to include all peaks for a given area or only those called by peak caller.
+#' @param peaks_tx a character vector indicating the location of the treatment MACS2 peak file.
+#' @param peaks_ctrl a character vector indicating the location of the control MACS2 peak file.
+#' @return a plot indicating the peak score for a specified chromosome position.
+#' @author Brendan Gongol
+#' @importFrom data.table data.table
+#' @importFrom rtracklayer import
+#' @export
+#' @examples
+#' ChiPseqPeakPlotter(treatment_bw <- "./example_datasets/8hr-PS1_S16_L008_R1_001.fastq.gz.hisat_PS_8hr.bw",
+#'                    control_bw <- "./example_datasets/bigwig_files/8hr-OS1_S7_L008_R1_001.fastq.gz.hisat_OS_8hr.bw",
+#'                    chr <- "10",
+#'                    start <- 69266000,
+#'                    end <- 69405881,
+#'                    average_dist <- 50,
+#'                    fill_dist <- 50,
+#'                    type = "all")
+#'
+#' ChiPseqPeakPlotter(treatment_bw <- "./example_datasets/8hr-PS1_S16_L008_R1_001.fastq.gz.hisat_PS_8hr.bw",
+#'                    control_bw <- "./example_datasets/8hr-OS1_S7_L008_R1_001.fastq.gz.hisat_OS_8hr.bw",
+#'                    chr <- "10",
+#'                    start <- 69266000,
+#'                    end <- 69405881,
+#'                    average_dist <- 50,
+#'                    fill_dist <- 50,
+#'                    type = "called",
+#'                    peaks_tx <- "./example_datasets/8hr-PS1_S16_L008_R1_001.fastq.gz.hisat_PS_8hr.bam_macs2_peaks.annotatedpeakAnno.xls",
+#'                    peaks_ctrl <- "./example_datasets/8hr-OS1_S7_L008_R1_001.fastq.gz.hisat_OS_8hr.bam_macs2_peaks.annotatedpeakAnno.xls")
+
+
+ChiPseqPeakPlotter <- function(treatment_bw, control_bw, chr, start, end, average_dist, fill_dist, type="all", peaks_tx, peaks_ctrl){
+
+  if(type == "all"){
+    ##############################################
+    ######### Code to get score from bw files ####
+    ##############################################
+    which <- GRanges(c(chr), IRanges(c(start), c(end)))
+    bw_tr <- import(treatment_bw, which = which)
+    bw_ct <- import(control_bw, which = which)
+
+    #### format treatment data ####
+    ###############################
+    scores <- data.table()
+    for(i in 1:length(start(ranges(bw_tr)))){
+      num <- start(ranges(bw_tr))[i]:end(ranges(bw_tr))[i]
+      sco <- score(bw_tr)[i]
+      dt <- data.table(num, sco)
+      scores <- rbind(scores, dt)
+    }
+    scores
+    len <- data.table(start:end); setnames(len, colnames(len), "num")
+    zz <- merge(len, scores, all = TRUE)
+    zz[is.na(zz)] <- 0
+    zz$key <- 1:nrow(zz)
+
+    #### create averages across specified windows ####
+    ##################################################
+    mea <- suppressWarnings(colMeans(matrix(zz$sco, average_dist)))######################
+    dt <- data.table(mea)
+    #### fill in lost rows ####
+    data_tx <- data.table()
+    for(i in 1:nrow(dt)){
+      d <- data.table(rep(dt$mea[i], fill_dist)); setnames(d, colnames(d), "mea")
+      data_tx <- rbind(data_tx, d)
+    }
+    data_tx$num <- 1:nrow(data_tx)
+
+    #### format control data ####
+    #############################
+    scores <- data.table()
+    for(i in 1:length(start(ranges(bw_ct)))){
+      num <- start(ranges(bw_ct))[i]:end(ranges(bw_ct))[i]
+      sco <- score(bw_ct)[i]
+      dt <- data.table(num, sco)
+      scores <- rbind(scores, dt)
+    }
+    scores
+    zz <- merge(len, scores, all = TRUE)
+    zz[is.na(zz)] <- 0
+    zz$key <- 1:nrow(zz)
+
+    #### create averages across specified windows ####
+    ##################################################
+    mea <- suppressWarnings(colMeans(matrix(zz$sco, average_dist)))####################
+    dt <- data.table(mea)
+    #### fill in lost rows ####
+    data_ctrl <- data.table()
+    for(i in 1:nrow(dt)){
+      d <- data.table(rep(dt$mea[i], fill_dist)); setnames(d, colnames(d), "mea")
+      data_ctrl <- rbind(data_ctrl, d)
+    }
+    data_ctrl$num <- 1:nrow(data_ctrl)
+
+    #### combine TX and CTRL data together ####
+    ###########################################
+    data_tx$fill <- "tx"
+    data_ctrl$fill <- "ctrl"
+    dt <- rbind(data_tx, data_ctrl)
+
+    #### plot data ####
+    ###################
+    p <- ggplot(aes(x=num, y=mea), data = dt)+
+      geom_line(aes(color = fill))+   #color = c("#1B9E77"))+
+      scale_color_brewer(palette = "Dark2")+ # "Set1"
+
+      #### add fill below line and color ####
+    geom_area(aes(fill=fill))+
+      scale_fill_brewer(palette="Dark2")+ # "Dark2"  "Set1"
+      # scale_fill_manual(values=c("#1B9E77", "#7570B3"))+ # Manually fill colors
+      # scale_color_manual(values=c("#1B9E77", "#7570B3")) +
+      theme_bw() +
+      theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank())
+    return(p)
+  }
+
+  else if(type == "called"){
+
+    #########################################
+    ### plot only peaks that were called ####
+    #########################################
+
+    #### get peaks for treatment and control files ####
+    ###################################################
+    df_tx <- read.delim(peaks_tx, comment = "#")
+    df_tx$seqnames <- gsub("chr", "", df_tx$seqnames, ignore.case = TRUE)
+    peaks_tx <- as(df_tx, "GRanges")
+
+    df_ctrl <- read.delim(peaks_ctrl, comment = "#")
+    df_ctrl$seqnames <- gsub("chr", "", df_ctrl$seqnames, ignore.case = TRUE)
+    peaks_ctrl <- as(df_ctrl, "GRanges")
+
+    #### subset out peaks for region of interest ####
+    #################################################
+    which <- GRanges(c(chr), IRanges(c(start), c(end)))
+
+    which_tx <- subsetByOverlaps(peaks_tx, which)
+    which_ctrl <- subsetByOverlaps(peaks_ctrl, which)
+
+    #### get score for selected regions ####
+    ########################################
+    bw_tr <- suppressWarnings(import(treatment_bw, which = which_tx))########################
+    bw_ct <- suppressWarnings(import(control_bw, which = which_ctrl))########################
+
+    #### format treatment data ####
+    ###############################
+    scores <- data.table()
+    for(i in 1:length(start(ranges(bw_tr)))){
+      num <- start(ranges(bw_tr))[i]:end(ranges(bw_tr))[i]
+      sco <- score(bw_tr)[i]
+      dt <- data.table(num, sco)
+      scores <- rbind(scores, dt)
+    }
+    scores
+    len <- data.table(start:end); setnames(len, colnames(len), "num")
+    zz <- merge(len, scores, all = TRUE)
+    zz[is.na(zz)] <- 0
+    zz$key <- 1:nrow(zz)
+
+    #### create averages across specified windows ####
+    ##################################################
+    mea <- suppressWarnings(colMeans(matrix(zz$sco, average_dist)))#####################
+    dt <- data.table(mea)
+    #### fill in lost rows ####
+    data_tx <- data.table()
+    for(i in 1:nrow(dt)){
+      d <- data.table(rep(dt$mea[i], fill_dist)); setnames(d, colnames(d), "mea")
+      data_tx <- rbind(data_tx, d)
+    }
+    data_tx$num <- 1:nrow(data_tx)
+
+    #### format control data ####
+    #############################
+    scores <- data.table()
+    for(i in 1:length(start(ranges(bw_ct)))){
+      num <- start(ranges(bw_ct))[i]:end(ranges(bw_ct))[i]
+      sco <- score(bw_ct)[i]
+      dt <- data.table(num, sco)
+      scores <- rbind(scores, dt)
+    }
+    scores
+    zz <- merge(len, scores, all = TRUE)
+    zz[is.na(zz)] <- 0
+    zz$key <- 1:nrow(zz)
+
+    #### create averages across specified windows ####
+    ##################################################
+    mea <- suppressWarnings(colMeans(matrix(zz$sco, average_dist)))#####################
+    dt <- data.table(mea)
+    #### fill in lost rows ####
+    data_ctrl <- data.table()
+    for(i in 1:nrow(dt)){
+      d <- data.table(rep(dt$mea[i], fill_dist)); setnames(d, colnames(d), "mea")
+      data_ctrl <- rbind(data_ctrl, d)
+    }
+    data_ctrl$num <- 1:nrow(data_ctrl)
+
+    #### combine TX and CTRL data together ####
+    ###########################################
+    data_tx$fill <- "tx"
+    data_ctrl$fill <- "ctrl"
+    dt <- rbind(data_tx, data_ctrl)
+
+    #### plot data ####
+    ###################
+    p <- ggplot(aes(x=num, y=mea), data = dt)+
+      geom_line(color = "#1B9E77")+
+      geom_area(aes(fill=fill))+
+      scale_fill_brewer(palette="Dark2")+
+      # scale_fill_manual(values=c("#1B9E77", "#7570B3"))+ # Manually fill colors
+      theme_bw() +
+      theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank())
+    return(p)
+  }
+
+}
+
+
+
+##################################################################################################################################################################################
+##################################################################################################################################################################################
+##################################################################################################################################################################################
+##################################################################################################################################################################################
+
+
+#' ChiPseqregionscoreR
+#'
+#' This function returns the average peak height of a CHiPseq experiment for a given chromosome location.
+#'
+#' @param treatment_bw a character vector indicating the location of the treatment bigwig file.
+#' @param control_bw a character vector indicating the location of the treatment bigwig file.
+#' @param chr a character vector indicating the chromosome number.
+#' @param start a number indicating the start site.
+#' @param end a number indicating the end site.
+#' @param average_dist a number indicating the number of bases to average the peak height.
+#' @return a data.table of the average peak score for a specified chromosome region.
+#' @author Brendan Gongol
+#' @importFrom data.table data.table
+#' @importFrom rtracklayer import
+#' @export
+#' @examples
+#' dt <- ChiPseqregionscoreR(treatment_bw <- "./results/bigwig_files/2hr-PS1_S13_L008_R1_001.fastq.gz.hisat_PS_2hr.bw",
+#'                           control_bw <- "./results/bigwig_files/2hr-OS1_S4_L008_R1_001.fastq.gz.hisat_OS_2hr.bw",
+#'                           chr <- "12",
+#'                           start <- 48105253 - 5000, # 48101253
+#'                           end <- 48105253 + 5000, # 48150404
+#'                           average_dist <- 50)
+#' hr2 <- data.table(dt[dt$fill == "tx",]$mea/dt[dt$fill == "ctrl",]$mea)
+#' hr2$time = "hr2"
+#'
+#' dt <- ChiPseqregionscoreR(treatment_bw <- "./results/bigwig_files/8hr-PS1_S16_L008_R1_001.fastq.gz.hisat_PS_8hr.bw",
+#'                    control_bw <- "./results/bigwig_files/8hr-OS1_S7_L008_R1_001.fastq.gz.hisat_OS_8hr.bw",
+#'                    chr <- "12",
+#'                    start <- 48105253 - 5000, # 48101253
+#'                    end <- 48105253 + 5000, # 48150404
+#'                    average_dist <- 50)
+#' hr8 <- data.table(dt[dt$fill == "tx",]$mea/dt[dt$fill == "ctrl",]$mea)
+#' hr8$time = "hr8"
+#'
+#' dt <- ChiPseqregionscoreR(treatment_bw <- "./results/bigwig_files/16hr-OS1_S10_L008_R1_001.fastq.gz.hisat_OS_16hr.bw",
+#'                           control_bw <- "./results/bigwig_files/16hr-PS1_S19_L008_R1_001.fastq.gz.hisat_PS_16hr.bw",
+#'                           chr <- "12",
+#'                           start <- 48105253 - 5000, # 48101253
+#'                           end <- 48105253 + 5000, # 48150404
+#'                           average_dist <- 50)
+#' hr16 <- data.table(dt[dt$fill == "tx",]$mea/dt[dt$fill == "ctrl",]$mea)
+#' hr16$time = "hr16"
+#'
+#' dt2 <- rbind(hr2, hr8)
+#' dt2 <- rbind(dt2, hr16); setnames(dt2, colnames(dt2), c("mea", "fill"))
+#' dt2 <- dt2[dt2$mea > 0,]
+#' dt2$mea <- log2(dt2$mea)
+#' dt2 <- dt2[!dt2$mea == "-Inf",]
+#' dt2 <- dt2[!dt2$mea == "Inf",]
+#' dt2
+
+
+ChiPseqregionscoreR <- function(treatment_bw, control_bw, chr, start, end, average_dist){
+
+  ##############################################
+  ######### Code to get score from bw files ####
+  ##############################################
+  which <- GRanges(c(chr), IRanges(c(start), c(end)))
+  bw_tr <- import(treatment_bw, which = which)
+  bw_ct <- import(control_bw, which = which)
+
+  #### format treatment data ####
+  ###############################
+  scores <- data.table()
+  for(i in 1:length(start(ranges(bw_tr)))){
+    num <- start(ranges(bw_tr))[i]:end(ranges(bw_tr))[i]
+    sco <- score(bw_tr)[i]
+    dt <- data.table(num, sco)
+    scores <- rbind(scores, dt)
+  }
+  scores
+  len <- data.table(start:end); setnames(len, colnames(len), "num")
+  zz <- merge(len, scores, all = TRUE)
+  zz[is.na(zz)] <- 0
+  zz$key <- 1:nrow(zz)
+
+  #### create averages across specified windows ####
+  ##################################################
+  mea <- suppressWarnings(colMeans(matrix(zz$sco, average_dist)))######################
+  data_tx <- data.table(mea)
+  # #### fill in lost rows ####
+  # data_tx <- data.table()
+  # for(i in 1:nrow(dt)){
+  #   d <- data.table(rep(dt$mea[i], fill_dist)); setnames(d, colnames(d), "mea")
+  #   data_tx <- rbind(data_tx, d)
+  # }
+  data_tx$num <- 1:nrow(data_tx)
+
+  #### format control data ####
+  #############################
+  scores <- data.table()
+  for(i in 1:length(start(ranges(bw_ct)))){
+    num <- start(ranges(bw_ct))[i]:end(ranges(bw_ct))[i]
+    sco <- score(bw_ct)[i]
+    dt <- data.table(num, sco)
+    scores <- rbind(scores, dt)
+  }
+  scores
+  zz <- merge(len, scores, all = TRUE)
+  zz[is.na(zz)] <- 0
+  zz$key <- 1:nrow(zz)
+
+  #### create averages across specified windows ####
+  ##################################################
+  mea <- suppressWarnings(colMeans(matrix(zz$sco, average_dist)))####################
+  data_ctrl <- data.table(mea)
+  # #### fill in lost rows ####
+  # data_ctrl <- data.table()
+  # for(i in 1:nrow(dt)){
+  #   d <- data.table(rep(dt$mea[i], fill_dist)); setnames(d, colnames(d), "mea")
+  #   data_ctrl <- rbind(data_ctrl, d)
+  # }
+  data_ctrl$num <- 1:nrow(data_ctrl)
+
+  #### combine TX and CTRL data together ####
+  ###########################################
+  data_tx$fill <- "tx"
+  data_ctrl$fill <- "ctrl"
+  dt <- rbind(data_tx, data_ctrl)
+  return(dt)
+
+}
